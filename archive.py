@@ -20,7 +20,7 @@ dest_config = {
 }
 
 table_name = 'orders'
-batch_size = 10  # Number of rows to move per batch
+batch_size = 1000  # Number of rows to move per batch
 
 # --- Logging Setup ---
 logging.basicConfig(
@@ -38,19 +38,17 @@ def transfer_large_data():
         # Establish connections
         src_conn = mysql.connector.connect(**source_config)
         dest_conn = mysql.connector.connect(**dest_config)
-        
         # buffered=True allows us to keep the read cursor open during inserts
         src_cursor = src_conn.cursor(buffered=True)
         dest_cursor = dest_conn.cursor()
-
         # 1. Pre-transfer Verification
         src_cursor.execute(f"SELECT COUNT(*) FROM {table_name}")
+        # dest_cursor.execute(f"SET FOREIGN_KEY_CHECKS = 0;")
         source_total = src_cursor.fetchone()[0]
         logging.info(f"START: Found {source_total} rows in {table_name}")
         print(f"Starting transfer of {source_total} rows...")
-
         # 2. Open Stream
-        src_cursor.execute(f"SELECT * FROM {table_name} LIMIT 1")
+        src_cursor.execute(f"SELECT * FROM {table_name} ")
 
         # 3. Batch Processing Loop
         while True:
@@ -61,9 +59,8 @@ def transfer_large_data():
             # Setup dynamic SQL placeholders once
             if total_moved == 0:
                 placeholders = ', '.join(['%s'] * len(rows[0]))
-                # Using INSERT IGNORE to skip existing primary keys
-                insert_sql = f"INSERT INTO {table_name} VALUES ({placeholders})"
-                print(insert_sql)
+                insert_sql = f"INSERT IGNORE INTO {table_name} VALUES ({placeholders})"
+                print(rows)
 
             try:
                 dest_cursor.executemany(insert_sql, rows)
