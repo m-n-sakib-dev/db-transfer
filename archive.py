@@ -16,10 +16,34 @@ dest_config = {
     'port': 3306,     
     'user': 'root',
     'password': '',
-    'database': 'bdfunnelbuilder'
+    'database': 'backupdatabase'
 }
 
 batch_size = 10000  # Number of rows to move per batch
+archive_date = '2025-07-01 00:00:00'
+archive_tables = [
+    'activity_log',
+    'fake_order_settings',
+    'sales',
+    'sales_target_histories',
+    'sales_targets',
+    'call_histories',
+    'orders'
+    
+]
+
+order_dependent_archive_table=[
+    'comments',
+    'applied_coupons',
+    'agent_assign_logs',
+    'call_initiation_logs',
+    'call_automation_logs',
+    'order_items',
+    'order_logs',
+    'order_metas',
+
+]
+
 
 # --- Logging Setup ---
 logging.basicConfig(
@@ -59,14 +83,18 @@ def transfer_table_data(table_name):
         logging.info(f"START: Found {source_total} rows in {table_name}")
         print(f"Starting transfer of {source_total} rows...")
         # 2. Open Stream
-        src_cursor.execute(f"SELECT * FROM {table_name}  LIMIT 50000")
+        if table_name in archive_tables:
+            src_cursor.execute(f"SELECT * FROM {table_name} WHERE created_at < %s", (archive_date,))
+        elif table_name in order_dependent_archive_table:
+            src_cursor.execute(f"SELECT {table_name}.*  FROM {table_name} INNER JOIN orders ON {table_name}.order_id = orders.id WHERE orders.created_at < %s", (archive_date,))
+        else:
+            src_cursor.execute(f"SELECT * FROM {table_name} ")
 
         # 3. Batch Processing Loop
         while True:
             rows = src_cursor.fetchmany(batch_size)
             if not rows:
                 break
-            
             # Setup dynamic SQL placeholders once
             if total_moved == 0:
                 placeholders = ', '.join(['%s'] * len(rows[0]))
