@@ -63,6 +63,7 @@ def transfer_large_data():
                 placeholders = ', '.join(['%s'] * len(rows[0]))
                 # Using INSERT IGNORE to skip existing primary keys
                 insert_sql = f"INSERT INTO {table_name} VALUES ({placeholders})"
+                print(insert_sql)
 
             try:
                 dest_cursor.executemany(insert_sql, rows)
