@@ -1,0 +1,19 @@
+2026-04-27 17:13:28,494 - CRITICAL - Connection failed: 2005 (HY000): Unknown MySQL server host '127.0.0.1:3306' (8)
+2026-04-27 17:15:42,644 - INFO - START: Found 1384010 rows in orders
+2026-04-27 17:19:26,790 - INFO - COMPLETE: Moved 1384010 rows. Target total: 1895
+2026-04-27 17:37:53,621 - INFO - START: Found 1384010 rows in orders
+2026-04-27 17:39:56,618 - INFO - START: Found 1384010 rows in orders
+2026-04-27 17:43:04,027 - INFO - START: Found 1384010 rows in orders
+2026-04-27 17:43:04,032 - INFO - COMPLETE: Moved 10 rows. Target total: 1895
+2026-04-27 17:43:41,395 - INFO - START: Found 1384010 rows in orders
+2026-04-27 17:43:41,399 - INFO - COMPLETE: Moved 10 rows. Target total: 1895
+2026-04-27 17:44:27,128 - INFO - START: Found 1384010 rows in orders
+2026-04-27 17:44:27,133 - INFO - COMPLETE: Moved 10 rows. Target total: 1895
+2026-04-27 17:49:52,222 - INFO - START: Found 1384010 rows in orders
+2026-04-27 17:49:52,225 - INFO - COMPLETE: Moved 1 rows. Target total: 1895
+2026-04-27 18:03:37,785 - INFO - START: Found 1384010 rows in orders
+2026-04-27 18:03:37,788 - ERROR - Error inserting batch near row 0: 1062 (23000): Duplicate entry '1' for key 'orders.PRIMARY'
+2026-04-27 18:03:37,788 - INFO - COMPLETE: Moved 0 rows. Target total: 1895
+2026-04-27 18:07:09,334 - INFO - START: Found 1384010 rows in orders
+2026-04-27 18:07:09,336 - ERROR - Error inserting batch near row 0: 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near 'INTO orders VALUES (1, 1, NULL, NULL, NULL, NULL, NULL, '{\"delivery_fee\": 60, ' at line 1
+2026-04-27 18:07:09,337 - INFO - COMPLETE: Moved 0 rows. Target total: 1895
