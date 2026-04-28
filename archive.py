@@ -19,36 +19,47 @@ dest_config = {
     'database': 'bdfunnelbuilder'
 }
 
-table_name = 'orders'
-batch_size = 1000  # Number of rows to move per batch
+batch_size = 10000  # Number of rows to move per batch
 
 # --- Logging Setup ---
 logging.basicConfig(
     filename='transfer_log.log',
+    filemode='w', 
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 
-def transfer_large_data():
+def connect_db():
+    try:
+        src_conn = mysql.connector.connect(**source_config)
+        dest_conn = mysql.connector.connect(**dest_config)
+        return [src_conn,dest_conn]
+    except mysql.connector.Error as err:
+        logging.critical(f"Connection failed: {err}")
+        print(f"Critical Error: {err}")
+        
+def disconnect_db(src_conn,dest_conn):
+    if src_conn: src_conn.close()
+    if dest_conn: dest_conn.close()
+
+def transfer_table_data(table_name):
     src_conn = None
     dest_conn = None
     total_moved = 0
 
     try:
-        # Establish connections
-        src_conn = mysql.connector.connect(**source_config)
-        dest_conn = mysql.connector.connect(**dest_config)
+        src_conn , dest_conn = connect_db() 
         # buffered=True allows us to keep the read cursor open during inserts
         src_cursor = src_conn.cursor(buffered=True)
         dest_cursor = dest_conn.cursor()
         # 1. Pre-transfer Verification
         src_cursor.execute(f"SELECT COUNT(*) FROM {table_name}")
-        # dest_cursor.execute(f"SET FOREIGN_KEY_CHECKS = 0;")
+
         source_total = src_cursor.fetchone()[0]
         logging.info(f"START: Found {source_total} rows in {table_name}")
         print(f"Starting transfer of {source_total} rows...")
         # 2. Open Stream
-        src_cursor.execute(f"SELECT * FROM {table_name} ")
+        src_cursor.execute(f"SELECT * FROM {table_name}  LIMIT 50000")
 
         # 3. Batch Processing Loop
         while True:
@@ -60,13 +71,15 @@ def transfer_large_data():
             if total_moved == 0:
                 placeholders = ', '.join(['%s'] * len(rows[0]))
                 insert_sql = f"INSERT IGNORE INTO {table_name} VALUES ({placeholders})"
-                print(rows)
 
             try:
+                dest_cursor.execute(f"SET FOREIGN_KEY_CHECKS = 0;")
                 dest_cursor.executemany(insert_sql, rows)
                 dest_conn.commit()
+                dest_cursor.execute(f"SET FOREIGN_KEY_CHECKS = 1;")
                 total_moved += len(rows)
                 print(f"Progress: {total_moved}/{source_total} moved...", end='\r')
+                logging.info(f"Progress: {total_moved}/{source_total} moved...")
             except mysql.connector.Error as e:
                 logging.error(f"Error inserting batch near row {total_moved}: {e}")
 
@@ -82,8 +95,28 @@ def transfer_large_data():
         logging.critical(f"Connection failed: {err}")
         print(f"Critical Error: {err}")
     finally:
-        if src_conn: src_conn.close()
-        if dest_conn: dest_conn.close()
+        disconnect_db(src_conn, dest_conn)
+        
+        
+def transfer_data():
+    src_conn = None
+    dest_conn = None
+    total_moved = 0
+    try:
+        src_conn , dest_conn = connect_db() 
+        src_cursor = src_conn.cursor(buffered=True)
+        src_cursor.execute(f"SHOW TABLES;")
+        rows = src_cursor.fetchall()
+        tables_name = [r[0] for r in rows]
+        tables_name.remove('job_batches')
+        for t_name in tables_name:
+            transfer_table_data(t_name) 
+        
+    except mysql.connector.Error as err:
+        logging.critical(f"Connection failed: {err}")
+        print(f"Critical Error: {err}")
+    finally:
+        disconnect_db(src_conn, dest_conn)
 
 if __name__ == '__main__':
-    transfer_large_data()
+    transfer_data()
