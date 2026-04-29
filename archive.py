@@ -22,7 +22,8 @@ dest_config = {
 }
 
 batch_size = 10000  # Number of rows to move per batch
-archive_date = '2025-07-01 00:00:00'
+start_date = '2025-07-01 00:00:00'
+end_date = '2026-07-01 00:00:00'
 archive_tables = [
     'activity_log',
     'fake_order_settings',
@@ -83,7 +84,7 @@ def transfer_table_data(table_name):
         source_total = src_cursor.fetchone()[0]
         logging.info(f"START: Found {source_total} rows in {table_name}")
 
-        params = [archive_date]
+        params = [start_date]
 
         if table_name in archive_tables:
             query = f"SELECT * FROM {table_name} WHERE created_at < %s"
@@ -186,18 +187,20 @@ def get_args():
     parser.add_argument("--src_db", required=True, help="Source Database name")
     
     
-    parser.add_argument("--archive_host", required=True, help="Archive Host IP")
-    parser.add_argument("--archive_port", required=True, help="Archive Host port")
-    parser.add_argument("--archive_user", required=True, help="Archive Host User")
-    parser.add_argument("--archive_password", required=True, help="Archive Host Password")
-    parser.add_argument("--archive_db", required=True, help="Archive Database name")
+    parser.add_argument("--archive_host", required=True, help="Destination Host IP")
+    parser.add_argument("--archive_port", required=True, help="Destination Host port")
+    parser.add_argument("--archive_user", required=True, help="Destination Host User")
+    parser.add_argument("--archive_password", required=True, help="Destination Host Password")
+    parser.add_argument("--archive_db", required=True, help="Destination Database name")
     
     parser.add_argument("--start_date", required=True, help="Start Date (YYYY-MM-DD)")
+    parser.add_argument("--end_date", required=True, help="Date Date (YYYY-MM-DD)")
 
     # Optional Arguments (Defaults to empty list/None)
     parser.add_argument("--tables", nargs='*', default=[], help="Specific tables (space separated). Leave empty for all.")
     parser.add_argument("--shop_ids", nargs='*', default=[], help="Specific Shop IDs (space separated). Leave empty for all.")
-
+    parser.add_argument("--delete-source-rows", nargs='*', default=False, help="True to delete source table rows that moved to destination")
+    parser.add_argument("--delete-dest-rows", nargs='*', default=False, help="True to delete destination tables old data.")
     return parser.parse_args()
 
 
@@ -231,7 +234,7 @@ def main():
     target_shops = args.shop_ids
     # Date Validation
     try:
-        archive_date = datetime.strptime(args.start_date, "%Y-%m-%d")
+        start_date = datetime.strptime(args.start_date, "%Y-%m-%d")
     except ValueError:
         logging.error("Error: Dates must be in YYYY-MM-DD format.")
         sys.exit(1)
@@ -241,7 +244,7 @@ def main():
     # print(f"dest_config: {dest_config}")
     # print(f"tables_to_move: {tables_to_move}")
     # print(f"shops_to_move: {target_shops }")
-    # print(f"archive_date: {archive_date}")
+    # print(f"start_date: {start_date}")
 
 
 
