@@ -118,7 +118,7 @@ def transfer_table_data(table_name):
             # Setup dynamic SQL placeholders once
             if total_moved == 0:
                 placeholders = ', '.join(['%s'] * len(rows[0]))
-                insert_sql = f"INSERT IGNORE INTO {table_name} VALUES ({placeholders})"
+                insert_sql = f"REPLACE INTO {table_name} VALUES ({placeholders})"
 
             try:
                 dest_cursor.execute(f"SET FOREIGN_KEY_CHECKS = 0;")
