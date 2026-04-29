@@ -24,6 +24,8 @@ dest_config = {
 batch_size = 10000  # Number of rows to move per batch
 start_date = '2025-07-01 00:00:00'
 end_date = '2026-07-01 00:00:00'
+delete_source_rows = False
+delete_dest_rows = False
 archive_tables = [
     'activity_log',
     'fake_order_settings',
@@ -76,28 +78,25 @@ def transfer_table_data(table_name):
 
     try:
         src_conn , dest_conn = connect_db() 
-        # buffered=True allows us to keep the read cursor open during inserts
-        src_cursor = src_conn.cursor(buffered=True)
-        dest_cursor = dest_conn.cursor()
-        # 1. Pre-transfer Verification
-        src_cursor.execute(f"SELECT COUNT(*) FROM {table_name}")
-        source_total = src_cursor.fetchone()[0]
-        logging.info(f"START: Found {source_total} rows in {table_name}")
 
-        params = [start_date]
+        src_cursor = src_conn.cursor(buffered=True)         # buffered=True allows us to keep the read cursor open during inserts
+        dest_cursor = dest_conn.cursor()
+
+        params = [start_date, end_date]
 
         if table_name in archive_tables:
-            query = f"SELECT * FROM {table_name} WHERE created_at < %s"
+            query = f"SELECT * FROM {table_name} WHERE created_at BETWEEN %s AND %s"
             if target_shops:
                 placeholders = ', '.join(['%s'] * len(target_shops))
                 query += f" AND shop_id IN ({placeholders})"
                 params.extend(target_shops)
+                
             src_cursor.execute(query, tuple(params))
 
         elif table_name in order_dependent_archive_table:
             query = (f"SELECT {table_name}.* FROM {table_name} "
                      f"INNER JOIN orders ON {table_name}.order_id = orders.id "
-                     f"WHERE orders.created_at < %s")
+                     f"WHERE orders.created_at BETWEEN %s AND %s")
             if target_shops:
                 placeholders = ', '.join(['%s'] * len(target_shops))
                 query += f" AND orders.shop_id IN ({placeholders})"
@@ -107,6 +106,9 @@ def transfer_table_data(table_name):
 
         else:
             src_cursor.execute(f"SELECT * FROM {table_name} ")
+            
+        total_rows = src_cursor.rowcount
+        logging.info(f"START: Found {total_rows} rows in {table_name}")
 
         # 3. Batch Processing Loop
         while True:
@@ -124,7 +126,7 @@ def transfer_table_data(table_name):
                 dest_conn.commit()
                 dest_cursor.execute(f"SET FOREIGN_KEY_CHECKS = 1;")
                 total_moved += len(rows)
-                logging.info(f"Progress: {total_moved}/{source_total} moved...")
+                logging.info(f"Progress: {total_moved}/{total_rows} moved...")
             except mysql.connector.Error as e:
                 logging.error(f"Error inserting batch near row {total_moved}: {e}")
 
@@ -132,7 +134,7 @@ def transfer_table_data(table_name):
         dest_cursor.execute(f"SELECT COUNT(*) FROM {table_name}")
         final_dest_count = dest_cursor.fetchone()[0]
         
-        report = f"COMPLETE: Moved {total_moved} rows. Target total: {final_dest_count}"
+        report = f"COMPLETE: Moved {total_moved} rows. Destination now total: {final_dest_count}"
         logging.info(report)
 
     except mysql.connector.Error as err:
@@ -199,8 +201,8 @@ def get_args():
     # Optional Arguments (Defaults to empty list/None)
     parser.add_argument("--tables", nargs='*', default=[], help="Specific tables (space separated). Leave empty for all.")
     parser.add_argument("--shop_ids", nargs='*', default=[], help="Specific Shop IDs (space separated). Leave empty for all.")
-    parser.add_argument("--delete-source-rows", nargs='*', default=False, help="True to delete source table rows that moved to destination")
-    parser.add_argument("--delete-dest-rows", nargs='*', default=False, help="True to delete destination tables old data.")
+    parser.add_argument("--delete_source_rows", action="store_true", help="Mention to delete source table rows that moved to destination")
+    parser.add_argument("--delete_dest_rows", action="store_true", help="Mention to delete destination tables old data.")
     return parser.parse_args()
 
 
@@ -231,20 +233,33 @@ def main():
             sys.exit(1)
         
     global target_shops
+    global start_date
+    global end_date
+    global delete_source_rows 
+    global delete_dest_rows 
+    
     target_shops = args.shop_ids
     # Date Validation
     try:
         start_date = datetime.strptime(args.start_date, "%Y-%m-%d")
+        end_date = datetime.strptime(args.end_date, "%Y-%m-%d")
     except ValueError:
         logging.error("Error: Dates must be in YYYY-MM-DD format.")
         sys.exit(1)
+        
+    delete_source_rows = args.delete_source_rows
+    delete_dest_rows = args.delete_source_rows
     
+
+    print(f"source_config: {source_config}")
+    print(f"dest_config: {dest_config}")
+    print(f"tables_to_move: {tables_to_move}")
+    print(f"shops_to_move: {target_shops }")
+    print(f"start_date: {start_date}")
+    print(f"end_date: {end_date}")
+    print(f"delete_source_rows: {delete_source_rows}")
+    print(f"delete_dest_rows: {delete_dest_rows}")
     transfer_data(tables_to_move)
-    # print(f"source_config: {source_config}")
-    # print(f"dest_config: {dest_config}")
-    # print(f"tables_to_move: {tables_to_move}")
-    # print(f"shops_to_move: {target_shops }")
-    # print(f"start_date: {start_date}")
 
 
 
