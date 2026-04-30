@@ -29,7 +29,6 @@ delete_dest_rows = False
 archive_tables = [
     'activity_log',
     'fake_order_settings',
-    'sales',
     'sales_target_histories',
     'sales_targets',
     'call_histories',
@@ -50,6 +49,7 @@ order_dependent_archive_table=[
 ]
 
 target_shops = []
+table_not_check_shop_id = ['activity_log', 'sales']
 
 # --- Logging Setup ---
 logging.basicConfig(
@@ -88,7 +88,7 @@ def transfer_table_data(table_name):
 
         if table_name in archive_tables:
             query = f"SELECT * FROM {table_name} WHERE created_at BETWEEN %s AND %s"
-            if target_shops:
+            if target_shops and table_name not in table_not_check_shop_id:
                 placeholders = ', '.join(['%s'] * len(target_shops))
                 query += f" AND shop_id IN ({placeholders})"
                 params.extend(target_shops)
@@ -99,7 +99,7 @@ def transfer_table_data(table_name):
             query = (f"SELECT {table_name}.* FROM {table_name} "
                      f"INNER JOIN orders ON {table_name}.order_id = orders.id "
                      f"WHERE orders.created_at BETWEEN %s AND %s")
-            if target_shops:
+            if target_shops and table_name not in table_not_check_shop_id:
                 placeholders = ', '.join(['%s'] * len(target_shops))
                 query += f" AND orders.shop_id IN ({placeholders})"
                 params.extend(target_shops)
@@ -182,14 +182,20 @@ def get_all_tables():
 def transfer_data(target_tables):
     tables_name = []
     try:
+        print("data transfer initialized")
         if not target_tables:
             tables_name = get_all_tables()
         else :
             tables_name = target_tables
         if 'job_batches' in tables_name:
             tables_name.remove('job_batches')
+        if 'orders' in tables_name:
+            tables_name.remove('orders')
+            tables_name.append('orders')
         for t_name in tables_name:
             transfer_table_data(t_name) 
+        
+        print("data transfer completed")
         
     except mysql.connector.Error as err:
         logging.critical(f"Connection failed: {err}")
