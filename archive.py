@@ -75,12 +75,14 @@ def transfer_table_data(table_name):
     src_conn = None
     dest_conn = None
     total_moved = 0
+    total_deleted = 0
 
     try:
         src_conn , dest_conn = connect_db() 
 
         src_cursor = src_conn.cursor(buffered=True)         # buffered=True allows us to keep the read cursor open during inserts
         dest_cursor = dest_conn.cursor()
+        src_delete_cursor = src_conn.cursor()
 
         params = [start_date, end_date]
 
@@ -109,6 +111,8 @@ def transfer_table_data(table_name):
             
         total_rows = src_cursor.rowcount
         logging.info(f"START: Found {total_rows} rows in {table_name}")
+        column_names = [desc[0] for desc in src_cursor.description]     #getting column names of that table
+        id_index = column_names.index('id') if 'id' in column_names else None       #getting the index to id column
 
         # 3. Batch Processing Loop
         while True:
@@ -127,8 +131,21 @@ def transfer_table_data(table_name):
                 dest_cursor.execute(f"SET FOREIGN_KEY_CHECKS = 1;")
                 total_moved += len(rows)
                 logging.info(f"Progress: {total_moved}/{total_rows} moved...")
+                
+                #deleting the moved rows
+                if delete_source_rows and id_index is not None:
+                    moved_ids= [row[id_index] for row in rows]
+                    delete_placeholder = ", ".join(['%s']* len(moved_ids))
+                    delete_query = f"DELETE FROM {table_name} WHERE id IN ({delete_placeholder})"
+                    src_delete_cursor.execute(f"SET FOREIGN_KEY_CHECKS = 0;")
+                    src_delete_cursor.execute(delete_query,tuple(moved_ids))
+                    deleted_rows = src_delete_cursor.rowcount
+                    total_deleted += deleted_rows
+                    src_conn.commit()
+                    src_delete_cursor.execute(f"SET FOREIGN_KEY_CHECKS = 1;")
+                    logging.info(f"Progress: {total_deleted}/{total_rows} deleted from source...")
             except mysql.connector.Error as e:
-                logging.error(f"Error inserting batch near row {total_moved}: {e}")
+                logging.error(f"Error moving batch near row {total_moved}: {e}")
 
         # 4. Post-transfer Verification
         dest_cursor.execute(f"SELECT COUNT(*) FROM {table_name}")
