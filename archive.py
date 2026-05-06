@@ -212,11 +212,11 @@ def get_args():
     parser.add_argument("--src_db", required=True, help="Source Database name")
     
     
-    parser.add_argument("--archive_host", required=True, help="Destination Host IP")
-    parser.add_argument("--archive_port", required=True, help="Destination Host port")
-    parser.add_argument("--archive_user", required=True, help="Destination Host User")
-    parser.add_argument("--archive_password", required=True, help="Destination Host Password")
-    parser.add_argument("--archive_db", required=True, help="Destination Database name")
+    parser.add_argument("--destination_host", required=True, help="Destination Host IP")
+    parser.add_argument("--destination_port", required=True, help="Destination Host port")
+    parser.add_argument("--destination_user", required=True, help="Destination Host User")
+    parser.add_argument("--destination_password", required=True, help="Destination Host Password")
+    parser.add_argument("--destination_db", required=True, help="Destination Database name")
     
     parser.add_argument("--start_date", required=True, help="Start Date (YYYY-MM-DD)")
     parser.add_argument("--end_date", required=True, help="Date Date (YYYY-MM-DD)")
@@ -240,11 +240,11 @@ def main():
     source_config['database'] = args.src_db
 
     # Updating global dest_config dictionary
-    dest_config['host'] = args.archive_host
-    dest_config['port'] = int(args.archive_port) if args.archive_port else 3306
-    dest_config['user'] = args.archive_user
-    dest_config['password'] = args.archive_password
-    dest_config['database'] = args.archive_db
+    dest_config['host'] = args.destination_host
+    dest_config['port'] = int(args.destination_port) if args.destination_port else 3306
+    dest_config['user'] = args.destination_user
+    dest_config['password'] = args.destination_password
+    dest_config['database'] = args.destination_db
 
     # Process optional lists
     # If user leaves empty, these will be an empty list []
