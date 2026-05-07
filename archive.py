@@ -114,38 +114,41 @@ def transfer_table_data(table_name):
         column_names = [desc[0] for desc in src_cursor.description]     #getting column names of that table
         id_index = column_names.index('id') if 'id' in column_names else None       #getting the index to id column
 
+        try:
         # 3. Batch Processing Loop
-        while True:
-            rows = src_cursor.fetchmany(batch_size)
-            if not rows:
-                break
-            # Setup dynamic SQL placeholders once
-            if total_moved == 0:
-                placeholders = ', '.join(['%s'] * len(rows[0]))
-                insert_sql = f"REPLACE INTO {table_name} VALUES ({placeholders})"
-
-            try:
+            while True:
+                rows = src_cursor.fetchmany(batch_size)
+                if not rows:
+                    break
+                # Setup dynamic SQL placeholders once
+                if total_moved == 0:
+                    placeholders = ', '.join(['%s'] * len(rows[0]))
+                    insert_sql = f"REPLACE INTO {table_name} VALUES ({placeholders})"
+                dest_conn.start_transaction()
                 dest_cursor.execute(f"SET FOREIGN_KEY_CHECKS = 0;")
-                dest_cursor.executemany(insert_sql, rows)
-                dest_conn.commit()
+                dest_cursor.executemany(insert_sql, rows)                    
                 dest_cursor.execute(f"SET FOREIGN_KEY_CHECKS = 1;")
                 total_moved += len(rows)
                 logging.info(f"Progress: {total_moved}/{total_rows} moved...")
                 
                 #deleting the moved rows
-                if delete_source_rows and id_index is not None:
+                if delete_source_rows and id_index is not None and (table_name in archive_tables or table_name in order_dependent_archive_table):
                     moved_ids= [row[id_index] for row in rows]
                     delete_placeholder = ", ".join(['%s']* len(moved_ids))
-                    delete_query = f"DELETE FROM {table_name} WHERE id IN ({delete_placeholder})"
+                    delete_query = f"DELETE FROM {table_name} WHERE id IN ({delete_placeholder})"                      
                     src_delete_cursor.execute(f"SET FOREIGN_KEY_CHECKS = 0;")
                     src_delete_cursor.execute(delete_query,tuple(moved_ids))
                     deleted_rows = src_delete_cursor.rowcount
                     total_deleted += deleted_rows
-                    src_conn.commit()
                     src_delete_cursor.execute(f"SET FOREIGN_KEY_CHECKS = 1;")
                     logging.info(f"Progress: {total_deleted}/{total_rows} deleted from source...")
-            except mysql.connector.Error as e:
-                logging.error(f"Error moving batch near row {total_moved}: {e}")
+                dest_conn.commit()    
+                src_conn.commit() 
+        except mysql.connector.Error as e:
+            dest_conn.rollback()
+            dest_cursor.execute(f"SET FOREIGN_KEY_CHECKS = 1;")
+            src_delete_cursor.execute(f"SET FOREIGN_KEY_CHECKS = 1;")
+            logging.error(f"Error moving batch near row {total_moved}: {e}")
 
         # 4. Post-transfer Verification
         dest_cursor.execute(f"SELECT COUNT(*) FROM {table_name}")
@@ -180,6 +183,7 @@ def get_all_tables():
         
         
 def transfer_data(target_tables):
+    global delete_source_rows
     tables_name = []
     try:
         print("data transfer initialized")
@@ -191,6 +195,12 @@ def transfer_data(target_tables):
             tables_name.remove('job_batches')
         if 'orders' in tables_name:
             tables_name.remove('orders')
+            delete_source_rows_temp = delete_source_rows
+            try:
+                delete_source_rows = False
+                transfer_table_data('orders')
+            finally:
+                delete_source_rows = delete_source_rows_temp
             tables_name.append('orders')
         for t_name in tables_name:
             transfer_table_data(t_name) 
