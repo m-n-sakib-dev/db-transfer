@@ -236,6 +236,7 @@ def get_args():
     parser.add_argument("--src_user", required=True, help="Source Host User")
     parser.add_argument("--src_password", required=True, help="Source Host Password")
     parser.add_argument("--src_db", required=True, help="Source Database name")
+    parser.add_argument("--src_ssl_ca", default="", help="Source Database SSL needed")
     
     
     parser.add_argument("--destination_host", required=True, help="Destination Host IP")
@@ -243,6 +244,7 @@ def get_args():
     parser.add_argument("--destination_user", required=True, help="Destination Host User")
     parser.add_argument("--destination_password", required=True, help="Destination Host Password")
     parser.add_argument("--destination_db", required=True, help="Destination Database name")
+    parser.add_argument("--destination_ssl_ca", default="", help="Destination Database SSL needed")
     
     parser.add_argument("--start_date", required=True, help="Start Date (YYYY-MM-DD)")
     parser.add_argument("--end_date", required=True, help="Date Date (YYYY-MM-DD)")
@@ -269,12 +271,14 @@ def main():
     source_config['user'] = args.src_user
     source_config['password'] = args.src_password
     source_config['database'] = args.src_db
+    source_config['ssl_ca'] = args.src_ssl_ca
 
     dest_config['host'] = args.destination_host
     dest_config['port'] = int(args.destination_port) if args.destination_port else 3306
     dest_config['user'] = args.destination_user
     dest_config['password'] = args.destination_password
     dest_config['database'] = args.destination_db
+    dest_config['ssl_ca'] = args.destination_ssl_ca
 
     tables_to_move = args.tables
     all_tables = get_all_tables()
