@@ -1,3 +1,4 @@
 .idea
+venv
 transfer_log.log
 test_log.log
