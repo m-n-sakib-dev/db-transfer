@@ -1,8 +1,10 @@
+import logging
 import mysql.connector
 import argparse
 import sys
 import logging
 from datetime import datetime
+import time
 
 # --- Configuration ---
 source_config = {
@@ -10,7 +12,8 @@ source_config = {
     'port': 3306,     
     'user': 'root',
     'password': '',
-    'database': 'archive_db_2'
+    'database': 'archive_db_2',
+    'ssl_ca': ""
 }
 
 dest_config = {
@@ -18,10 +21,12 @@ dest_config = {
     'port': 3306,     
     'user': 'root',
     'password': '',
-    'database': 'backupdatabase'
+    'database': 'backupdatabase',
+    'ssl_ca': ""
 }
 
 batch_size = 10000  # Number of rows to move per batch
+sleep_time = 100
 start_date = '2025-07-01 00:00:00'
 end_date = '2026-07-01 00:00:00'
 delete_source_rows = False
@@ -66,12 +71,22 @@ def connect_db():
         return [src_conn,dest_conn]
     except mysql.connector.Error as err:
         logging.critical(f"Connection failed: {err}")
+        return [None,None]
         
 def disconnect_db(src_conn,dest_conn):
     if src_conn: src_conn.close()
     if dest_conn: dest_conn.close()
 
+def sleep():
+    logging.info(f"Process is sleeping....")
+    time.sleep(sleep_time)
+    logging.info(f"Process started again....")
+
 def transfer_table_data(table_name):
+    logging.info(f"-----------------------------------------------------")
+    logging.info(f"-----------------------------------------------------")
+    
+    logging.info(f"Starting transfer for table: {table_name}")
     src_conn = None
     dest_conn = None
     total_moved = 0
@@ -129,7 +144,7 @@ def transfer_table_data(table_name):
                 dest_cursor.executemany(insert_sql, rows)                    
                 dest_cursor.execute(f"SET FOREIGN_KEY_CHECKS = 1;")
                 total_moved += len(rows)
-                logging.info(f"Progress: {total_moved}/{total_rows} moved...")
+                logging.info(f"Progress: {total_moved}/{total_rows} moved from table {table_name}")
                 
                 #deleting the moved rows
                 if delete_source_rows and id_index is not None and (table_name in archive_tables or table_name in order_dependent_archive_table):
@@ -141,9 +156,10 @@ def transfer_table_data(table_name):
                     deleted_rows = src_delete_cursor.rowcount
                     total_deleted += deleted_rows
                     src_delete_cursor.execute(f"SET FOREIGN_KEY_CHECKS = 1;")
-                    logging.info(f"Progress: {total_deleted}/{total_rows} deleted from source...")
+                    logging.info(f"Progress: {total_deleted}/{total_rows} deleted from source table {table_name}")
                 dest_conn.commit()    
                 src_conn.commit() 
+                sleep()
         except mysql.connector.Error as e:
             dest_conn.rollback()
             dest_cursor.execute(f"SET FOREIGN_KEY_CHECKS = 1;")
@@ -231,6 +247,12 @@ def get_args():
     parser.add_argument("--start_date", required=True, help="Start Date (YYYY-MM-DD)")
     parser.add_argument("--end_date", required=True, help="Date Date (YYYY-MM-DD)")
 
+
+    parser.add_argument("--batch_size", type=int, default=10000, help="Number of rows to move per batch")
+    parser.add_argument("--sleep_time", type=int, default=1, help="Sleep time between batches")
+    parser.add_argument("--test_connection", action="store_true", help="Mention to test connection")
+
+
     # Optional Arguments (Defaults to empty list/None)
     parser.add_argument("--tables", nargs='*', default=[], help="Specific tables (space separated). Leave empty for all.")
     parser.add_argument("--shop_ids", nargs='*', default=[], help="Specific Shop IDs (space separated). Leave empty for all.")
@@ -241,23 +263,19 @@ def get_args():
 
 def main():
     args = get_args()
-    # Accessing variables
-    # Updating global source_config dictionary
+
     source_config['host'] = args.src_host
     source_config['port'] = int(args.src_port) if args.src_port else 3306
     source_config['user'] = args.src_user
     source_config['password'] = args.src_password
     source_config['database'] = args.src_db
 
-    # Updating global dest_config dictionary
     dest_config['host'] = args.destination_host
     dest_config['port'] = int(args.destination_port) if args.destination_port else 3306
     dest_config['user'] = args.destination_user
     dest_config['password'] = args.destination_password
     dest_config['database'] = args.destination_db
 
-    # Process optional lists
-    # If user leaves empty, these will be an empty list []
     tables_to_move = args.tables
     all_tables = get_all_tables()
     for table in tables_to_move:
@@ -270,8 +288,16 @@ def main():
     global end_date
     global delete_source_rows 
     global delete_dest_rows 
-    
+    global batch_size
+    global sleep_time
+
+    batch_size = args.batch_size
+    sleep_time = args.sleep_time
     target_shops = args.shop_ids
+    test_connection = args.test_connection
+
+    
+    
     # Date Validation
     try:
         start_date = datetime.strptime(args.start_date, "%Y-%m-%d")
@@ -284,17 +310,39 @@ def main():
     delete_dest_rows = args.delete_source_rows
     
 
-    print(f"source_config: {source_config}")
-    print(f"dest_config: {dest_config}")
-    print(f"tables_to_move: {tables_to_move}")
-    print(f"shops_to_move: {target_shops }")
-    print(f"start_date: {start_date}")
-    print(f"end_date: {end_date}")
-    print(f"delete_source_rows: {delete_source_rows}")
-    print(f"delete_dest_rows: {delete_dest_rows}")
-    transfer_data(tables_to_move)
+    logging.info(f"source_config: {source_config}")
+    logging.info(f"dest_config: {dest_config}")
+    logging.info(f"tables_to_move: {tables_to_move}")
+    logging.info(f"shops_to_move: {target_shops }")
+    logging.info(f"start_date: {start_date}")
+    logging.info(f"end_date: {end_date}")
+    logging.info(f"delete_source_rows: {delete_source_rows}")
+    logging.info(f"delete_dest_rows: {delete_dest_rows}")
+    logging.info(f"batch_size: {batch_size}")
+    logging.info(f"sleep_time: {sleep_time}")
+
+
+    src,dst=connect_db()      
+    if src and dst:
+        logging.info("database connected")
+        print("database connected")
+        if test_connection:
+            print("test connection successful")
+            sleep()
+            return
+        transfer_data(tables_to_move)
+    if not src:
+        logging.error("source could not be connect")
+        print("source could not be connect")  
+    if not dst:
+        logging.error("dest could not be connect")
+        print("dest could not be connect")
+    
 
 
 
 if __name__ == '__main__':
     main()
+    print("Process finished")
+    logging.info("Process finished")
+    
