@@ -1,8 +1,18 @@
+from mysql.connector import optionfiles
 import mysql.connector
 import logging
 from datetime import datetime
 import argparse
 import sys
+
+
+target_shops = []
+batch_size = 10000  # Number of rows to move per batch
+sleept_time = 1
+start_date = '2025-07-01 00:00:00'
+end_date = '2026-07-01 00:00:00'
+delete_source_rows = False
+delete_dest_rows = False
 source_config = {
     'host': '',
     'port': '',     
@@ -18,7 +28,8 @@ dest_config = {
     'port': 3306,     
     'user': 'root',
     'password': '',
-    'database': 'backupdatabase'
+    'database': 'backupdatabase',
+    'ssl_ca': ""
 }
 
 logging.basicConfig(
@@ -35,6 +46,7 @@ def connect_db():
         return [src_conn,dest_conn]
     except mysql.connector.Error as err:
         logging.critical(f"Connection failed: {err}")
+        return [None,None]
         
         
 def main():
@@ -67,6 +79,9 @@ def get_args():
     
     parser.add_argument("--start_date", required=True, help="Start Date (YYYY-MM-DD)")
     parser.add_argument("--end_date", required=True, help="Date Date (YYYY-MM-DD)")
+    
+    parser.add_argument("--batch_size", type=int, default=10000, help="Number of rows to move per batch")
+    parser.add_argument("--sleep_time", type=int, default=1, help="Sleep time between batches")
 
     # Optional Arguments (Defaults to empty list/None)
     parser.add_argument("--tables", nargs='*', default=[], help="Specific tables (space separated). Leave empty for all.")
@@ -97,15 +112,20 @@ def main():
     dest_config['ssl_ca'] = args.destination_ssl_ca
 
 
-    tables_to_move = args.tables
         
     global target_shops
     global start_date
     global end_date
     global delete_source_rows 
     global delete_dest_rows 
-    
+    global batch_size
+    global sleept_time
+
+    batch_size = args.batch_size
+    sleept_time = args.sleep_time
+    tables_to_move = args.tables
     target_shops = args.shop_ids
+    
     # Date Validation
     try:
         start_date = datetime.strptime(args.start_date, "%Y-%m-%d")
@@ -126,14 +146,19 @@ def main():
     print(f"end_date: {end_date}")
     print(f"delete_source_rows: {delete_source_rows}")
     print(f"delete_dest_rows: {delete_dest_rows}")
+    print(f"batch_size: {batch_size}")
+    print(f"sleept_time: {sleept_time}")
     
     src,dst=connect_db()      
     if src and dst:
         logging.info("database connected")
+        print("database connected")
     if not src:
-        logging.error("source could not be connect")  
+        logging.error("source could not be connect")
+        print("source could not be connect")  
     if not dst:
         logging.error("dest could not be connect")
+        print("dest could not be connect")
 
 
 
