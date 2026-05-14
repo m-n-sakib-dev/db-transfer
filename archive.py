@@ -283,6 +283,8 @@ def transfer_data(target_tables):
         
         print("data transfer completed")
         transfer_log.info("data transfer completed")
+        cron_cursor.execute("UPDATE schedules SET status = 'completed' WHERE process_id = %s", (pid,))
+        cron_db_conn.commit()
         
     except mysql.connector.Error as err:
         transfer_log.critical(f"Connection failed: {err}")
@@ -498,7 +500,9 @@ def main():
                         (pid, scheduled_job['id'])
                     )
                     cron_db.commit()
-                    start_process(scheduled_job)  
+                    start_process(scheduled_job) 
+                    cron_cursor.execute("UPDATE schedules SET status = 'completed' WHERE process_id = %s", (pid,))
+                    cron_db.commit() 
                 else :
                     try:
                         os.kill(scheduled_job['process_id'], 0) 
@@ -506,7 +510,6 @@ def main():
                         cron_log.info("Job is already running")
                         return 
                     except OSError:
-
                         cron_log.warning("Previous job was terminated without completion , new job will start now.")
                         print("Previous job was terminated without completion , new job will start now.")
                         
@@ -521,7 +524,9 @@ def main():
                             (pid, scheduled_job['id'])
                         )
                         cron_db.commit()
-                        start_process(scheduled_job)  
+                        start_process(scheduled_job) 
+                        cron_cursor.execute("UPDATE schedules SET status = 'completed' WHERE process_id = %s", (pid,))
+                        cron_db.commit() 
             else:
                 print("No scheduled job found")
                 cron_log.info("No scheduled job found to execute")
