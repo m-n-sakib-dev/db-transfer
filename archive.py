@@ -116,12 +116,14 @@ def transfer_table_data(table_name):
         dest_conn = connect_db(dest_config) 
         cron_db_conn = connect_db(cron_db_config)
 
-        src_cursor = src_conn.cursor(buffered=True)         # buffered=True allows us to keep the read cursor open during inserts
+        src_cursor = src_conn.cursor(buffered=True)        
         dest_cursor = dest_conn.cursor()
         src_delete_cursor = src_conn.cursor()
         cron_db_cursor = cron_db_conn.cursor(dictionary=True)
 
         params = [start_date, end_date]
+
+        print(1)
 
         if table_name in archive_tables:
             query = f"SELECT * FROM {table_name} WHERE created_at BETWEEN %s AND %s"
@@ -132,19 +134,25 @@ def transfer_table_data(table_name):
                 
             src_cursor.execute(query, tuple(params))
 
+
         elif table_name in order_dependent_archive_table:
+
             query = (f"SELECT {table_name}.* FROM {table_name} "
                      f"INNER JOIN orders ON {table_name}.order_id = orders.id "
                      f"WHERE orders.created_at BETWEEN %s AND %s")
             if target_shops and table_name not in table_not_check_shop_id:
+
                 placeholders = ', '.join(['%s'] * len(target_shops))
                 query += f" AND orders.shop_id IN ({placeholders})"
                 params.extend(target_shops)
 
-            src_cursor.execute(query, tuple(params))
+            src_cursor.execute(query, tuple(params)) 
 
         else:
+            print(11)
             src_cursor.execute(f"SELECT * FROM {table_name} ")
+
+        print(2)
             
         total_rows = src_cursor.rowcount
         transfer_log.info(f"START: Found {total_rows} rows in {table_name}")
@@ -156,11 +164,15 @@ def transfer_table_data(table_name):
         try:
         # 3. Batch Processing Loop
             while True:
-                cron_schedule_data = cron_db_cursor.execute("SELECT batch_size, sleep_time FROM schedules WHERE process_id = %s", (pid)).fetchone()
+                print(3)
+                cron_db_cursor.execute("SELECT batch_size, sleep_time FROM schedules WHERE process_id = %s", (pid,))
+                cron_schedule_data = cron_db_cursor.fetchone()
                 global batch_size,sleep_time
                 batch_size = cron_schedule_data['batch_size']
                 sleep_time = cron_schedule_data['sleep_time']
+
                 rows = src_cursor.fetchmany(batch_size)
+                print(4)
                 if not rows:
                     break
                 # Setup dynamic SQL placeholders once
@@ -171,7 +183,7 @@ def transfer_table_data(table_name):
                 dest_cursor.execute(f"SET FOREIGN_KEY_CHECKS = 0;")
                 dest_cursor.executemany(insert_sql, rows)                    
                 dest_cursor.execute(f"SET FOREIGN_KEY_CHECKS = 1;")
-                
+                print(5)
                 
                 #deleting the moved rows
                 if delete_source_rows and id_index is not None and (table_name in archive_tables or table_name in order_dependent_archive_table):
@@ -188,11 +200,11 @@ def transfer_table_data(table_name):
                 src_conn.commit() 
                 total_moved += len(rows)
                 transfer_log.info(f"Progress: {total_moved}/{total_rows} moved from table {table_name}")
-                dest_cursor.execute(f"SELECT COUNT(*) FROM {table_name}")
-                final_dest_count = dest_cursor.fetchone()[0]
+                # dest_cursor.execute(f"SELECT COUNT(*) FROM {table_name}")
+                # final_dest_count = dest_cursor.fetchone()[0]
                 cron_db_cursor.execute("REPLACE INTO process (scheduler_id,table_name, converted_rows, dest_total_rows, status) SELECT s.id, %s, %s, %s, %s FROM schedules s WHERE s.process_id = %s", (table_name, total_moved, final_dest_count, 'processing', pid))
                 cron_db_conn.commit()
-                sleep()
+                # sleep()
         except mysql.connector.Error as e:
             dest_conn.rollback()
             dest_cursor.execute(f"SET FOREIGN_KEY_CHECKS = 1;")
@@ -463,8 +475,9 @@ def start_process(job):
             transfer_log.info("test connection successful")
             sleep()
             return
-        else:
-            transfer_data()
+        else :
+            transfer_data(get_all_tables())
+
     if not src:
         transfer_log.error("source could not be connect")
         print("source could not be connect")  
@@ -485,11 +498,10 @@ def main():
                     "src_pass, src_ca_cert, dest_host, dest_port, dest_db_name, dest_user_name, "
                     "dest_pass, dest_ca_cert, start_time, batch_size, sleep_time, status, "
                     "created_at, updated_at, start_date, end_date, delete_source_rows, test_connection "
-                    "FROM schedules WHERE status <> 'completed' LIMIT 1"
+                    "FROM schedules WHERE status <> 'completed' OR status IS NULL LIMIT 1"
                 )
 
             scheduled_job = cron_cursor.fetchone()
-
 
             if scheduled_job:
                 if not scheduled_job['process_id']:
