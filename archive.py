@@ -170,7 +170,6 @@ def transfer_table_data(table_name):
                 global batch_size,sleep_time
                 batch_size = cron_schedule_data['batch_size']
                 sleep_time = cron_schedule_data['sleep_time']
-
                 rows = src_cursor.fetchmany(batch_size)
                 print(4)
                 if not rows:
@@ -200,8 +199,8 @@ def transfer_table_data(table_name):
                 src_conn.commit() 
                 total_moved += len(rows)
                 transfer_log.info(f"Progress: {total_moved}/{total_rows} moved from table {table_name}")
-                # dest_cursor.execute(f"SELECT COUNT(*) FROM {table_name}")
-                # final_dest_count = dest_cursor.fetchone()[0]
+                dest_cursor.execute(f"SELECT COUNT(*) FROM {table_name}")
+                final_dest_count = dest_cursor.fetchone()[0]
                 cron_db_cursor.execute("REPLACE INTO process (scheduler_id,table_name, converted_rows, dest_total_rows, status) SELECT s.id, %s, %s, %s, %s FROM schedules s WHERE s.process_id = %s", (table_name, total_moved, final_dest_count, 'processing', pid))
                 cron_db_conn.commit()
                 # sleep()
