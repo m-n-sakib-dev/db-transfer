@@ -96,167 +96,10 @@ def disconnect_db(conn):
     if conn: conn.close()
 
 def sleep():
-    transfer_log.info(f"Process is sleeping....")
-    time.sleep(sleep_time)
-    transfer_log.info(f"Process started again....")
-
-
-def transfer_table_data_3(table_name):
-    delete_status = False
-    pid = os.getpid()
-    transfer_log.info(f"-----------------------------------------------------")
-    transfer_log.info(f"-----------------------------------------------------")
-    transfer_log.info(f"Starting transfer for table: {table_name}")
-    src_conn = None
-    dest_conn = None
-    total_moved = 0
-    total_deleted = 0
-    try:
-        src_conn = connect_db(source_config)
-        dest_conn = connect_db(dest_config)
-        cron_db_conn = connect_db(cron_db_config)
-        src_cursor = src_conn.cursor(buffered=True)
-        dest_cursor = dest_conn.cursor()
-        src_delete_cursor = src_conn.cursor()
-        cron_db_cursor = cron_db_conn.cursor(dictionary=True)
-        params = [start_date, end_date]
-        if table_name in archive_tables:
-            query = f"SELECT * FROM {table_name} WHERE created_at BETWEEN %s AND %s"
-            if target_shops and table_name not in table_not_check_shop_id:
-                placeholders = ', '.join(['%s'] * len(target_shops))
-                query += f" AND shop_id IN ({placeholders})"
-                params.extend(target_shops)
-            src_cursor.execute(query, tuple(params))
-        elif table_name in order_dependent_archive_table:
-            query = (f"SELECT {table_name}.* FROM {table_name} "
-                     f"INNER JOIN orders ON {table_name}.order_id = orders.id "
-                     f"WHERE orders.created_at BETWEEN %s AND %s")
-            if target_shops and table_name not in table_not_check_shop_id:
-                placeholders = ', '.join(['%s'] * len(target_shops))
-                query += f" AND orders.shop_id IN ({placeholders})"
-                params.extend(target_shops)
-            src_cursor.execute(query, tuple(params))
-        else:
-            src_cursor.execute(f"SELECT * FROM {table_name} ")
-        total_rows = src_cursor.rowcount
-        transfer_log.info(f"START: Found {total_rows} rows in {table_name}")
-        
-        cron_db_cursor.execute("""
-            INSERT INTO process (scheduler_id, table_name, target_total_rows, status)
-            SELECT s.id, %s, %s, %s FROM schedules s WHERE s.process_id = %s
-            ON DUPLICATE KEY UPDATE target_total_rows = VALUES(target_total_rows), status = VALUES(status)
-        """, (table_name, total_rows, 'active', pid))
-        cron_db_conn.commit()
-        
-        column_names = [desc[0] for desc in src_cursor.description]
-        id_index = column_names.index('id') if 'id' in column_names else None
-        
-        try:
-            while True:
-                cron_db_cursor.execute("SELECT batch_size, sleep_time FROM schedules WHERE process_id = %s", (pid,))
-                cron_schedule_data = cron_db_cursor.fetchone()
-                global batch_size, sleep_time
-                batch_size = cron_schedule_data['batch_size']
-                sleep_time = cron_schedule_data['sleep_time']
-                rows = src_cursor.fetchmany(batch_size)
-                if not rows:
-                    break
-                if total_moved == 0:
-                    placeholders = ', '.join(['%s'] * len(rows[0]))
-                    insert_sql = f"REPLACE INTO {table_name} VALUES ({placeholders})"
-                
-                dest_conn.start_transaction()
-                dest_cursor.execute(f"SET FOREIGN_KEY_CHECKS = 0;")
-                dest_cursor.executemany(insert_sql, rows)
-                dest_cursor.execute(f"SET FOREIGN_KEY_CHECKS = 1;")
-                
-                if delete_source_rows and id_index is not None and (table_name in archive_tables or table_name in order_dependent_archive_table):
-                    delete_status = True
-                    moved_ids = [row[id_index] for row in rows]
-                    delete_placeholder = ", ".join(['%s'] * len(moved_ids))
-                    delete_query = f"DELETE FROM {table_name} WHERE id IN ({delete_placeholder})"
-                    src_delete_cursor.execute(f"SET FOREIGN_KEY_CHECKS = 0;")
-                    src_delete_cursor.execute(delete_query, tuple(moved_ids))
-                    deleted_rows = src_delete_cursor.rowcount
-                    total_deleted += deleted_rows
-                    src_delete_cursor.execute(f"SET FOREIGN_KEY_CHECKS = 1;")
-                    transfer_log.info(f"Progress: {total_deleted}/{total_rows} deleted from source table {table_name}")
-                
-                dest_conn.commit()
-                src_conn.commit()
-                total_moved += len(rows)
-                transfer_log.info(f"Progress: {total_moved}/{total_rows} moved from table {table_name}")
-                
-                dest_cursor.execute(f"SELECT COUNT(*) FROM {table_name}")
-                final_dest_count = dest_cursor.fetchone()[0]
-                
-                cron_db_cursor.execute("""
-                    UPDATE process p JOIN schedules s ON s.process_id = %s 
-                    SET p.scheduler_id = s.id, p.table_name = %s, p.converted_rows = %s, p.dest_total_rows = %s, p.status = %s 
-                    WHERE p.table_name = %s
-                """, (pid, table_name, total_moved, final_dest_count, 'processing', table_name))
-                cron_db_conn.commit()
-                sleep()
-            
-            dest_cursor.execute(f"SELECT COUNT(*) FROM {table_name}")
-            final_dest_count = dest_cursor.fetchone()[0]
-            
-            if (total_moved == total_deleted and total_moved == total_rows and delete_status) or (not delete_status and total_moved == total_rows):
-                report = f"COMPLETE: Moved {total_moved} rows. Destination now total: {final_dest_count}"
-                transfer_log.info(report)
-                cron_db_cursor.execute("""
-                    UPDATE process p JOIN schedules s ON s.process_id = %s 
-                    SET p.scheduler_id = s.id, p.table_name = %s, p.converted_rows = %s, p.dest_total_rows = %s, p.status = %s, p.error_msg = %s 
-                    WHERE p.table_name = %s
-                """, (pid, table_name, total_moved, final_dest_count, 'completed', '', table_name))
-                cron_db_conn.commit()
-            else:
-                transfer_log.error(f"ERROR: Moved {total_moved} rows. Deleted {total_deleted} rows. when target rows {total_rows} and destination rows {final_dest_count}")
-                cron_db_cursor.execute("""
-                    UPDATE process p JOIN schedules s ON s.process_id = %s 
-                    SET p.scheduler_id = s.id, p.table_name = %s, p.converted_rows = %s, p.dest_total_rows = %s, p.status = %s, p.error_msg = %s 
-                    WHERE p.table_name = %s
-                """, (pid, table_name, total_moved, final_dest_count, 'error2', 'some data not deleted or moved', table_name))
-                cron_db_conn.commit()
-                
-        except mysql.connector.Error as e:
-            try:
-                dest_conn.rollback()
-                src_conn.rollback()
-            except:
-                pass
-            try:
-                dest_cursor.execute(f"SET FOREIGN_KEY_CHECKS = 1;")
-                src_delete_cursor.execute(f"SET FOREIGN_KEY_CHECKS = 1;")
-                dest_conn.commit()
-                src_conn.commit()
-            except:
-                pass
-            transfer_log.error(f"Error moving batch near row {total_moved}: {e}")
-            cron_db_cursor.execute("""
-                UPDATE process p JOIN schedules s ON s.process_id = %s 
-                SET p.scheduler_id = s.id, p.table_name = %s, p.status = %s, p.error_msg = %s 
-                WHERE p.table_name = %s
-            """, (pid, table_name, 'error1', str(e), table_name))
-            cron_db_conn.commit()
-            
-    except mysql.connector.Error as err:
-        query_upsert = """
-        INSERT INTO process (scheduler_id, table_name, status, error_msg)
-        SELECT s.id, %s, %s, %s FROM schedules s WHERE s.process_id = %s LIMIT 1
-        ON DUPLICATE KEY UPDATE status = VALUES(status), error_msg = VALUES(error_msg), table_name = VALUES(table_name)
-        """
-        try:
-            cron_db_cursor.execute(query_upsert, (table_name, 'error3', str(err), pid))
-            cron_db_conn.commit()
-        except:
-            pass
-        transfer_log.critical(f"Connection failed: {err}")
-    finally:
-        disconnect_db(src_conn)
-        disconnect_db(dest_conn)
-        disconnect_db(cron_db_conn)
-
+    if sleep_time  >= 0: 
+        transfer_log.info(f"Process is sleeping....")
+        time.sleep(sleep_time)
+        transfer_log.info(f"Process started again....")
 
 
 def transfer_table_data(table_name):
@@ -319,12 +162,12 @@ def transfer_table_data(table_name):
 
         try:
             while True:
-
                 cron_db_cursor.execute("SELECT batch_size, sleep_time FROM schedules WHERE process_id = %s", (pid,))
                 cron_schedule_data = cron_db_cursor.fetchone()
                 global batch_size,sleep_time
                 batch_size = cron_schedule_data['batch_size']
                 sleep_time = cron_schedule_data['sleep_time']
+
                 rows = src_cursor.fetchmany(batch_size)
 
                 if not rows:
@@ -333,12 +176,12 @@ def transfer_table_data(table_name):
                 if total_moved == 0:
                     placeholders = ', '.join(['%s'] * len(rows[0]))
                     insert_sql = f"REPLACE INTO {table_name} VALUES ({placeholders})"
+
                 dest_conn.start_transaction()
                 dest_cursor.execute(f"SET FOREIGN_KEY_CHECKS = 0;")
-                dest_cursor.executemany(insert_sql, rows)                    
+                dest_cursor.executemany(insert_sql, rows)                  
                 dest_cursor.execute(f"SET FOREIGN_KEY_CHECKS = 1;")
 
-                
                 #deleting the moved rows
                 if delete_source_rows and id_index is not None and (table_name in archive_tables or table_name in order_dependent_archive_table):
                     delete_status = True
@@ -389,7 +232,7 @@ def transfer_table_data(table_name):
                     p.table_name = %s,
                     p.status = %s,
                     p.error_msg = %s
-                WHERE p.table_name = %s
+                WHERE p.table_name = %s AND p.scheduler_id = s.id
                 """, 
                 (pid, table_name, 'error1', str(e), table_name)
             )
@@ -412,7 +255,7 @@ def transfer_table_data(table_name):
                         p.dest_total_rows = %s,
                         p.status = %s,
                         p.error_msg = %s
-                    WHERE p.table_name = %s
+                    WHERE p.table_name = %s AND p.scheduler_id = s.id
                     """, 
                     (pid, table_name, total_moved, final_dest_count, 'completed', '', table_name)
                 )
@@ -430,7 +273,7 @@ def transfer_table_data(table_name):
                         p.dest_total_rows = %s,
                         p.status = %s,
                         p.error_msg = %s
-                    WHERE p.table_name = %s
+                    WHERE p.table_name = %s AND p.scheduler_id = s.id
                     """, 
                     (pid, table_name, total_moved, final_dest_count, 'error2', 'some data not deleted or moved', table_name)
                 )
@@ -578,54 +421,6 @@ def get_all_tables():
         disconnect_db(dest_conn)        
         
         
-# def transfer_data_2(target_tables):
-#     pid = os.getpid()
-#     global delete_source_rows
-#     tables_name = []
-#     try:
-#         print(363)
-#         cron_db_conn = connect_db(cron_db_config)
-#         cron_cursor = cron_db_conn.cursor(dictionary=True)
-#         cron_cursor.execute("SELECT p.table_name FROM process as p JOIN schedules as s ON p.scheduler_id=s.id WHERE s.process_id=%s AND p.status = 'completed'",(pid,))
-#         completed_table_rows = cron_cursor.fetchall()
-#         completed_tables = [row['table_name'] for row in completed_table_rows]
-#         print(completed_tables)
-
-#         print("data transfer initialized")
-#         if not target_tables:
-#             tables_name = get_all_tables()
-#         else :
-#             tables_name = target_tables
-#         if 'job_batches' in tables_name:
-#             tables_name.remove('job_batches')
-        
-#         if 'orders' in tables_name:
-#             tables_name.remove('orders')
-#             delete_source_rows_temp = delete_source_rows
-#             try:
-#                 delete_source_rows = False
-#                 print("line 383")
-#                 if 'orders' not in completed_tables:
-#                     transfer_table_data_old('orders')
-#             finally:
-#                 delete_source_rows = delete_source_rows_temp
-#             tables_name.append('orders')
-#         for t_name in tables_name:
-#             if t_name not in completed_tables:
-#                 transfer_table_data_old(t_name) 
-        
-#         if 'orders' in tables_name:
-#             transfer_table_data_old('orders')
-        
-#         print("data transfer completed")
-#         transfer_log.info("data transfer completed")
-#         cron_cursor.execute("UPDATE schedules SET status = 'completed' WHERE process_id = %s", (pid,))
-#         cron_db_conn.commit()
-        
-#     except mysql.connector.Error as err:
-#         transfer_log.critical(f"Connection failed: {err}")
-
-
 def transfer_data(target_tables):
     pid = os.getpid()
     global delete_source_rows
@@ -637,13 +432,14 @@ def transfer_data(target_tables):
         completed_table_rows = cron_cursor.fetchall()
         completed_tables = [row['table_name'] for row in completed_table_rows]
 
-        print("data transfer initialized")
         if not target_tables:
             tables_name = get_all_tables()
         else :
             tables_name = target_tables
         if 'job_batches' in tables_name:
             tables_name.remove('job_batches')
+
+        transfer_log.info(f"Data transfer started {datetime.now()}")
         
         if 'orders' in tables_name:
             tables_name.remove('orders')
@@ -662,7 +458,6 @@ def transfer_data(target_tables):
         if 'orders' in tables_name:
             transfer_table_data('orders')
         
-        print("data transfer completed")
         transfer_log.info("data transfer completed")
         cron_cursor.execute("UPDATE schedules SET status = 'completed' WHERE process_id = %s", (pid,))
         cron_db_conn.commit()
