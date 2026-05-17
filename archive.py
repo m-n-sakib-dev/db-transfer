@@ -101,7 +101,7 @@ def sleep():
     transfer_log.info(f"Process started again....")
 
 
-def transfer_table_data(table_name):
+def transfer_table_data_3(table_name):
     delete_status = False
     pid = os.getpid()
     transfer_log.info(f"-----------------------------------------------------")
@@ -259,7 +259,7 @@ def transfer_table_data(table_name):
 
 
 
-def transfer_table_data_2(table_name):
+def transfer_table_data(table_name):
     delete_status = False
     pid = os.getpid()
     transfer_log.info(f"-----------------------------------------------------")
@@ -371,6 +371,7 @@ def transfer_table_data_2(table_name):
                             """, 
                             (pid, table_name, total_moved, final_dest_count, 'processing', table_name)
                         )
+                dest_conn.commit()
                 cron_db_conn.commit()
                 sleep()
         except mysql.connector.Error as e:
@@ -577,53 +578,54 @@ def get_all_tables():
         disconnect_db(dest_conn)        
         
         
-def transfer_data_2(target_tables):
-    pid = os.getpid()
-    global delete_source_rows
-    tables_name = []
-    try:
-        print(363)
-        cron_db_conn = connect_db(cron_db_config)
-        cron_cursor = cron_db_conn.cursor(dictionary=True)
-        cron_cursor.execute("SELECT p.table_name FROM process as p JOIN schedules as s ON p.scheduler_id=s.id WHERE s.process_id=%s AND p.status = 'completed'",(pid,))
-        completed_table_rows = cron_cursor.fetchall()
-        completed_tables = [row['table_name'] for row in completed_table_rows]
-        print(completed_tables)
+# def transfer_data_2(target_tables):
+#     pid = os.getpid()
+#     global delete_source_rows
+#     tables_name = []
+#     try:
+#         print(363)
+#         cron_db_conn = connect_db(cron_db_config)
+#         cron_cursor = cron_db_conn.cursor(dictionary=True)
+#         cron_cursor.execute("SELECT p.table_name FROM process as p JOIN schedules as s ON p.scheduler_id=s.id WHERE s.process_id=%s AND p.status = 'completed'",(pid,))
+#         completed_table_rows = cron_cursor.fetchall()
+#         completed_tables = [row['table_name'] for row in completed_table_rows]
+#         print(completed_tables)
 
-        print("data transfer initialized")
-        if not target_tables:
-            tables_name = get_all_tables()
-        else :
-            tables_name = target_tables
-        if 'job_batches' in tables_name:
-            tables_name.remove('job_batches')
+#         print("data transfer initialized")
+#         if not target_tables:
+#             tables_name = get_all_tables()
+#         else :
+#             tables_name = target_tables
+#         if 'job_batches' in tables_name:
+#             tables_name.remove('job_batches')
         
-        if 'orders' in tables_name:
-            tables_name.remove('orders')
-            delete_source_rows_temp = delete_source_rows
-            try:
-                delete_source_rows = False
-                print("line 383")
-                if 'orders' not in completed_tables:
-                    transfer_table_data_old('orders')
-            finally:
-                delete_source_rows = delete_source_rows_temp
-            tables_name.append('orders')
-        for t_name in tables_name:
-            if t_name not in completed_tables:
-                transfer_table_data_old(t_name) 
+#         if 'orders' in tables_name:
+#             tables_name.remove('orders')
+#             delete_source_rows_temp = delete_source_rows
+#             try:
+#                 delete_source_rows = False
+#                 print("line 383")
+#                 if 'orders' not in completed_tables:
+#                     transfer_table_data_old('orders')
+#             finally:
+#                 delete_source_rows = delete_source_rows_temp
+#             tables_name.append('orders')
+#         for t_name in tables_name:
+#             if t_name not in completed_tables:
+#                 transfer_table_data_old(t_name) 
         
-        if 'orders' in tables_name:
-            transfer_table_data_old('orders')
+#         if 'orders' in tables_name:
+#             transfer_table_data_old('orders')
         
-        print("data transfer completed")
-        transfer_log.info("data transfer completed")
-        cron_cursor.execute("UPDATE schedules SET status = 'completed' WHERE process_id = %s", (pid,))
-        cron_db_conn.commit()
+#         print("data transfer completed")
+#         transfer_log.info("data transfer completed")
+#         cron_cursor.execute("UPDATE schedules SET status = 'completed' WHERE process_id = %s", (pid,))
+#         cron_db_conn.commit()
         
-    except mysql.connector.Error as err:
-        transfer_log.critical(f"Connection failed: {err}")
-        
+#     except mysql.connector.Error as err:
+#         transfer_log.critical(f"Connection failed: {err}")
+
+
 def transfer_data(target_tables):
     pid = os.getpid()
     global delete_source_rows
