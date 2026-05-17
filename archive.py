@@ -162,7 +162,6 @@ def transfer_table_data(table_name):
         id_index = column_names.index('id') if 'id' in column_names else None       #getting the index to id column
 
         try:
-        # 3. Batch Processing Loop
             while True:
                 print(3)
                 cron_db_cursor.execute("SELECT batch_size, sleep_time FROM schedules WHERE process_id = %s", (pid,))
@@ -195,6 +194,8 @@ def transfer_table_data(table_name):
                     total_deleted += deleted_rows
                     src_delete_cursor.execute(f"SET FOREIGN_KEY_CHECKS = 1;")
                     transfer_log.info(f"Progress: {total_deleted}/{total_rows} deleted from source table {table_name}")
+                    
+                print(6)
                 dest_conn.commit()    
                 src_conn.commit() 
                 total_moved += len(rows)
@@ -407,7 +408,6 @@ def main_old():
         print("database connected")
         if test_connection:
             print("test connection successful")
-            sleep()
             return
         transfer_data(tables_to_move)
     if not src:
@@ -472,7 +472,6 @@ def start_process(job):
         if test_connection:
             print("test connection successful")
             transfer_log.info("test connection successful")
-            sleep()
             return
         else :
             transfer_data(get_all_tables())
