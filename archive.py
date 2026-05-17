@@ -355,7 +355,7 @@ def get_all_tables():
         disconnect_db(dest_conn)        
         
         
-def transfer_data(target_tables):
+def transfer_data_2(target_tables):
     pid = os.getpid()
     global delete_source_rows
     tables_name = []
@@ -402,7 +402,7 @@ def transfer_data(target_tables):
     except mysql.connector.Error as err:
         transfer_log.critical(f"Connection failed: {err}")
         
-def transfer_data_old(target_tables):
+def transfer_data(target_tables):
     pid = os.getpid()
     global delete_source_rows
     tables_name = []
@@ -445,6 +445,7 @@ def transfer_data_old(target_tables):
         
     except mysql.connector.Error as err:
         transfer_log.critical(f"Connection failed: {err}")
+
 
 def get_args():
     parser = argparse.ArgumentParser(description="Database Archiving Script")
