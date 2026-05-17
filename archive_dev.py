@@ -298,6 +298,107 @@ def transfer_table_data(table_name):
         disconnect_db(src_conn)
         disconnect_db(dest_conn)
         disconnect_db(cron_db_conn)
+
+
+
+def transfer_table_data_old(table_name):
+    transfer_log.info(f"-----------------------------------------------------")
+    transfer_log.info(f"-----------------------------------------------------")
+    
+    transfer_log.info(f"Starting transfer for table: {table_name}")
+    src_conn = None
+    dest_conn = None
+    total_moved = 0
+    total_deleted = 0
+
+    try:
+        src_conn = connect_db(source_config)
+        dest_conn = connect_db(dest_config)
+
+        src_cursor = src_conn.cursor(buffered=True)         # buffered=True allows us to keep the read cursor open during inserts
+        dest_cursor = dest_conn.cursor()
+        src_delete_cursor = src_conn.cursor()
+
+        params = [start_date, end_date]
+
+        if table_name in archive_tables:
+            query = f"SELECT * FROM {table_name} WHERE created_at BETWEEN %s AND %s"
+            if target_shops and table_name not in table_not_check_shop_id:
+                placeholders = ', '.join(['%s'] * len(target_shops))
+                query += f" AND shop_id IN ({placeholders})"
+                params.extend(target_shops)
+                
+            src_cursor.execute(query, tuple(params))
+
+        elif table_name in order_dependent_archive_table:
+            query = (f"SELECT {table_name}.* FROM {table_name} "
+                     f"INNER JOIN orders ON {table_name}.order_id = orders.id "
+                     f"WHERE orders.created_at BETWEEN %s AND %s")
+            if target_shops and table_name not in table_not_check_shop_id:
+                placeholders = ', '.join(['%s'] * len(target_shops))
+                query += f" AND orders.shop_id IN ({placeholders})"
+                params.extend(target_shops)
+
+            src_cursor.execute(query, tuple(params))
+
+        else:
+            src_cursor.execute(f"SELECT * FROM {table_name} ")
+            
+        total_rows = src_cursor.rowcount
+        transfer_log.info(f"START: Found {total_rows} rows in {table_name}")
+        column_names = [desc[0] for desc in src_cursor.description]     #getting column names of that table
+        id_index = column_names.index('id') if 'id' in column_names else None       #getting the index to id column
+
+        try:
+        # 3. Batch Processing Loop
+            while True:
+                rows = src_cursor.fetchmany(batch_size)
+                if not rows:
+                    break
+                # Setup dynamic SQL placeholders once
+                if total_moved == 0:
+                    placeholders = ', '.join(['%s'] * len(rows[0]))
+                    insert_sql = f"REPLACE INTO {table_name} VALUES ({placeholders})"
+                dest_conn.start_transaction()
+                dest_cursor.execute(f"SET FOREIGN_KEY_CHECKS = 0;")
+                dest_cursor.executemany(insert_sql, rows)                    
+                dest_cursor.execute(f"SET FOREIGN_KEY_CHECKS = 1;")
+                total_moved += len(rows)
+                transfer_log.info(f"Progress: {total_moved}/{total_rows} moved from table {table_name}")
+                
+                #deleting the moved rows
+                if delete_source_rows and id_index is not None and (table_name in archive_tables or table_name in order_dependent_archive_table):
+                    moved_ids= [row[id_index] for row in rows]
+                    delete_placeholder = ", ".join(['%s']* len(moved_ids))
+                    delete_query = f"DELETE FROM {table_name} WHERE id IN ({delete_placeholder})"                      
+                    src_delete_cursor.execute(f"SET FOREIGN_KEY_CHECKS = 0;")
+                    src_delete_cursor.execute(delete_query,tuple(moved_ids))
+                    deleted_rows = src_delete_cursor.rowcount
+                    total_deleted += deleted_rows
+                    src_delete_cursor.execute(f"SET FOREIGN_KEY_CHECKS = 1;")
+                    transfer_log.info(f"Progress: {total_deleted}/{total_rows} deleted from source table {table_name}")
+                dest_conn.commit()    
+                src_conn.commit() 
+                sleep()
+        except mysql.connector.Error as e:
+            dest_conn.rollback()
+            dest_cursor.execute(f"SET FOREIGN_KEY_CHECKS = 1;")
+            src_delete_cursor.execute(f"SET FOREIGN_KEY_CHECKS = 1;")
+            transfer_log.error(f"Error moving batch near row {total_moved}: {e}")
+
+        # 4. Post-transfer Verification
+        dest_cursor.execute(f"SELECT COUNT(*) FROM {table_name}")
+        final_dest_count = dest_cursor.fetchone()[0]
+        
+        report = f"COMPLETE: Moved {total_moved} rows. Destination now total: {final_dest_count}"
+        transfer_log.info(report)
+
+    except mysql.connector.Error as err:
+        transfer_log.critical(f"Connection failed: {err}")
+    finally:
+        disconnect_db(src_conn)
+        disconnect_db(dest_conn)
+
           
         
 def get_all_tables():
@@ -365,7 +466,121 @@ def transfer_data(target_tables):
         transfer_log.critical(f"Connection failed: {err}")
 
 
- 
+def get_args():
+    parser = argparse.ArgumentParser(description="Database Archiving Script")
+
+    # Mandatory Arguments
+    parser.add_argument("--src_host", required=True, help="Source Host IP")
+    parser.add_argument("--src_port", required=True, help="Source Host port")
+    parser.add_argument("--src_user", required=True, help="Source Host User")
+    parser.add_argument("--src_password", required=True, help="Source Host Password")
+    parser.add_argument("--src_db", required=True, help="Source Database name")
+    parser.add_argument("--src_ssl_ca", default="", help="Source Database SSL needed")
+    
+    
+    parser.add_argument("--destination_host", required=True, help="Destination Host IP")
+    parser.add_argument("--destination_port", required=True, help="Destination Host port")
+    parser.add_argument("--destination_user", required=True, help="Destination Host User")
+    parser.add_argument("--destination_password", required=True, help="Destination Host Password")
+    parser.add_argument("--destination_db", required=True, help="Destination Database name")
+    parser.add_argument("--destination_ssl_ca", default="", help="Destination Database SSL needed")
+    
+    parser.add_argument("--start_date", required=True, help="Start Date (YYYY-MM-DD)")
+    parser.add_argument("--end_date", required=True, help="Date Date (YYYY-MM-DD)")
+
+
+    parser.add_argument("--batch_size", type=int, default=10000, help="Number of rows to move per batch")
+    parser.add_argument("--sleep_time", type=int, default=1, help="Sleep time between batches")
+    parser.add_argument("--test_connection", action="store_true", help="Mention to test connection")
+
+
+    # Optional Arguments (Defaults to empty list/None)
+    parser.add_argument("--tables", nargs='*', default=[], help="Specific tables (space separated). Leave empty for all.")
+    parser.add_argument("--shop_ids", nargs='*', default=[], help="Specific Shop IDs (space separated). Leave empty for all.")
+    parser.add_argument("--delete_source_rows", action="store_true", help="Mention to delete source table rows that moved to destination")
+    parser.add_argument("--delete_dest_rows", action="store_true", help="Mention to delete destination tables old data.")
+    return parser.parse_args()
+
+
+def main_old():
+    args = get_args()
+
+    source_config['host'] = args.src_host
+    source_config['port'] = int(args.src_port) if args.src_port else 3306
+    source_config['user'] = args.src_user
+    source_config['password'] = args.src_password
+    source_config['database'] = args.src_db
+    source_config['ssl_ca'] = args.src_ssl_ca
+
+    dest_config['host'] = args.destination_host
+    dest_config['port'] = int(args.destination_port) if args.destination_port else 3306
+    dest_config['user'] = args.destination_user
+    dest_config['password'] = args.destination_password
+    dest_config['database'] = args.destination_db
+    dest_config['ssl_ca'] = args.destination_ssl_ca
+
+    tables_to_move = args.tables
+    all_tables = get_all_tables()
+    for table in tables_to_move:
+        if table not in all_tables:
+            transfer_log.error(f"Error: {table} does not exists in database.")
+            sys.exit(1)
+        
+    global target_shops
+    global start_date
+    global end_date
+    global delete_source_rows 
+    global delete_dest_rows 
+    global batch_size
+    global sleep_time
+
+    batch_size = args.batch_size
+    sleep_time = args.sleep_time
+    target_shops = args.shop_ids
+    test_connection = args.test_connection
+
+    
+    
+    # Date Validation
+    try:
+        start_date = datetime.strptime(args.start_date, "%Y-%m-%d")
+        end_date = datetime.strptime(args.end_date, "%Y-%m-%d")
+    except ValueError:
+        transfer_log.error("Error: Dates must be in YYYY-MM-DD format.")
+        sys.exit(1)
+        
+    delete_source_rows = args.delete_source_rows
+    delete_dest_rows = args.delete_source_rows
+    
+
+    transfer_log.info(f"source_config: {source_config}")
+    transfer_log.info(f"dest_config: {dest_config}")
+    transfer_log.info(f"tables_to_move: {tables_to_move}")
+    transfer_log.info(f"shops_to_move: {target_shops }")
+    transfer_log.info(f"start_date: {start_date}")
+    transfer_log.info(f"end_date: {end_date}")
+    transfer_log.info(f"delete_source_rows: {delete_source_rows}")
+    transfer_log.info(f"delete_dest_rows: {delete_dest_rows}")
+    transfer_log.info(f"batch_size: {batch_size}")
+    transfer_log.info(f"sleep_time: {sleep_time}")
+
+
+    src= connect_db(source_config)
+    dst=connect_db(dest_config)      
+    if src and dst:
+        transfer_log.info("database connected")
+        print("database connected")
+        if test_connection:
+            print("test connection successful")
+            return
+        transfer_data(tables_to_move)
+    if not src:
+        transfer_log.error("source could not be connect")
+        print("source could not be connect")  
+    if not dst:
+        transfer_log.error("dest could not be connect")
+        print("dest could not be connect")
+    
 
 def start_process(job):
     args = job
