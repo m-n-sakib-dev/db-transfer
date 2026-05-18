@@ -44,9 +44,7 @@ delete_source_rows = False
 delete_dest_rows = False
 archive_tables = [
     'activity_log',
-    'fake_order_settings',
     'sales_target_histories',
-    'sales_targets',
     'call_histories',
     'orders'
     
