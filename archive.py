@@ -61,7 +61,6 @@ order_dependent_archive_table=[
     'order_items',
     'order_logs',
     'order_metas',
-
 ]
 
 target_shops = []
@@ -354,7 +353,7 @@ def transfer_data(target_tables):
             if t_name not in completed_tables:
                 transfer_table_data(t_name) 
         
-        if 'orders' in tables_name:
+        if 'orders' in tables_name and delete_source_rows:
             transfer_table_data('orders')
         
         transfer_log.info("data transfer completed")
