@@ -273,7 +273,7 @@ def transfer_table_data(table_name):
                         p.dest_total_rows = %s,
                         p.status = %s,
                         p.error_msg = %s
-                    WHERE p.table_name = %s AND p.scheduler_id = s.id
+                    WHERE p.table_name = %s AND p.scheduler_id = s.id AND p.status != 'error1'
                     """, 
                     (pid, table_name, total_moved, final_dest_count, 'error2', 'some data not deleted or moved', table_name)
                 )
