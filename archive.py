@@ -1,22 +1,23 @@
 import logging
 import mysql.connector
-import argparse
-import sys
+import sqlite3
 import logging
 from datetime import datetime
 import time
 import os
 
 # --- Configuration ---
+# cron_db_config = {
+#     'host': '104.248.157.66',
+#     'port': 3306,     
+#     'user': 'user_sakib',
+#     'password': 'your_password',
+#     'database': 'cron_db',
+#     'ssl_ca': ""
+# }
 cron_db_config = {
-    'host': '104.248.157.66',
-    'port': 3306,     
-    'user': 'user_sakib',
-    'password': 'your_password',
-    'database': 'cron_db',
-    'ssl_ca': ""
+    'database': 'database/cron_db.db'
 }
-
 
 source_config = {
     'host': '127.0.0.1',
@@ -83,8 +84,12 @@ cron_log.addHandler(cron_log_handler)
 
 def connect_db(config):
     try:
-        conn = mysql.connector.connect(**config)
-        return conn
+        if config == cron_db_config:
+            conn = sqlite3.connect(**config)
+            return conn
+        else:
+            conn = mysql.connector.connect(**config)
+            return conn
     except mysql.connector.Error as err:
         transfer_log.critical(f"Failed to connect to {config['host']}:{config['database']} : {err}")
         return None
