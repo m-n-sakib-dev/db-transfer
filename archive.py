@@ -442,7 +442,7 @@ def main():
                     "src_pass, src_ca_cert, dest_host, dest_port, dest_db_name, dest_user_name, "
                     "dest_pass, dest_ca_cert, start_time, batch_size, sleep_time, status, "
                     "created_at, updated_at, start_date, end_date, delete_source_rows, test_connection "
-                    "FROM schedules WHERE status <> 'completed' OR status IS NULL LIMIT 1"
+                    "FROM schedules WHERE (status <> 'completed' OR status IS NULL) AND start_time <= NOW() ORDER BY start_time ASC LIMIT 1"
                 )
 
             scheduled_job = cron_cursor.fetchone()
