@@ -7,7 +7,6 @@ def setup_database():
     db_name = os.path.join(folder_name, "cron_db.db")
     conn = sqlite3.connect(db_name)
     cursor = conn.cursor()
-    
     print(f"Connected to database: {db_name}")
 
     try:
@@ -36,12 +35,12 @@ def setup_database():
             batch_size INTEGER DEFAULT 1000,
             sleep_time INTEGER DEFAULT 0,
             status TEXT DEFAULT NULL,
-            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-            updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
             start_date TEXT NOT NULL,
             end_date TEXT NOT NULL,
             delete_source_rows INTEGER DEFAULT 0,
-            test_connection INTEGER DEFAULT 0
+            test_connection INTEGER DEFAULT 0,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT DEFAULT CURRENT_TIMESTAMP
         );
         ''')
 
@@ -56,9 +55,9 @@ def setup_database():
             converted_rows INTEGER DEFAULT 0,
             dest_total_rows INTEGER DEFAULT 0,
             status TEXT DEFAULT 'pending',
+            error_msg TEXT,
             created_at TEXT DEFAULT CURRENT_TIMESTAMP,
             updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
-            error_msg TEXT,
             UNIQUE (scheduler_id, table_name),
             CONSTRAINT fk_schedules FOREIGN KEY (scheduler_id) REFERENCES schedules (id) ON DELETE CASCADE
         );
