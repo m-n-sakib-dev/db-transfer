@@ -62,6 +62,8 @@ order_dependent_archive_table=[
     'order_metas',
 ]
 
+error_tables = []
+
 target_shops = []
 table_not_check_shop_id = ['activity_log', 'sales']
 
@@ -323,6 +325,7 @@ def get_all_tables():
         
         
 def transfer_data(target_tables):
+    delete_order_table = True
     pid = os.getpid()
     global delete_source_rows
     tables_name = []
@@ -355,8 +358,15 @@ def transfer_data(target_tables):
         for t_name in tables_name:
             if t_name not in completed_tables:
                 transfer_table_data(t_name) 
+        cron_cursor.execute("SELECT p.table_name FROM process as p JOIN schedules as s ON p.scheduler_id=s.id WHERE s.process_id=%s AND p.status = 'error1' or p.status = 'error2' or p.status = 'error3'",(pid,))
+        error_table_rows = cron_cursor.fetchall()
+        error_tables = [row['table_name'] for row in error_table_rows]
+        for t_name in error_tables:
+            if t_name in order_dependent_archive_table:
+                delete_order_table = False
+                break
         
-        if 'orders' in tables_name and delete_source_rows:
+        if 'orders' in tables_name and delete_source_rows and delete_order_table:
             transfer_table_data('orders')
         
         transfer_log.info("data transfer completed")
