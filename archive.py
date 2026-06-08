@@ -1,22 +1,23 @@
 import logging
 import mysql.connector
-import argparse
-import sys
+import sqlite3
 import logging
 from datetime import datetime
 import time
 import os
 
 # --- Configuration ---
+# cron_db_config = {
+#     'host': '104.248.157.66',
+#     'port': 3306,     
+#     'user': 'user_sakib',
+#     'password': 'your_password',
+#     'database': 'cron_db',
+#     'ssl_ca': ""
+# }
 cron_db_config = {
-    'host': '104.248.157.66',
-    'port': 3306,     
-    'user': 'user_sakib',
-    'password': 'your_password',
-    'database': 'cron_db',
-    'ssl_ca': ""
+    'database': 'database/cron_db.db'
 }
-
 
 source_config = {
     'host': '127.0.0.1',
@@ -61,6 +62,8 @@ order_dependent_archive_table=[
     'order_metas',
 ]
 
+error_tables = []
+
 target_shops = []
 table_not_check_shop_id = ['activity_log', 'sales']
 
@@ -83,8 +86,12 @@ cron_log.addHandler(cron_log_handler)
 
 def connect_db(config):
     try:
-        conn = mysql.connector.connect(**config)
-        return conn
+        if config == cron_db_config:
+            conn = sqlite3.connect(**config)
+            return conn
+        else:
+            conn = mysql.connector.connect(**config)
+            return conn
     except mysql.connector.Error as err:
         transfer_log.critical(f"Failed to connect to {config['host']}:{config['database']} : {err}")
         return None
@@ -119,7 +126,8 @@ def transfer_table_data(table_name):
         src_cursor = src_conn.cursor(buffered=True)        
         dest_cursor = dest_conn.cursor()
         src_delete_cursor = src_conn.cursor()
-        cron_db_cursor = cron_db_conn.cursor(dictionary=True)
+        cron_db_conn.row_factory = sqlite3.Row
+        cron_db_cursor = cron_db_conn.cursor()
 
         params = [start_date, end_date]
 
@@ -152,14 +160,14 @@ def transfer_table_data(table_name):
             
         total_rows = src_cursor.rowcount
         transfer_log.info(f"START: Found {total_rows} rows in {table_name}")
-        cron_db_cursor.execute("REPLACE INTO process (scheduler_id, table_name, target_total_rows, status) SELECT s.id, %s, %s, %s FROM schedules s WHERE s.process_id = %s", (table_name, total_rows,'active', pid))
+        cron_db_cursor.execute("REPLACE INTO process (scheduler_id, table_name, target_total_rows, status) SELECT s.id, ?, ?, ? FROM schedules s WHERE s.process_id = ?", (table_name, total_rows,'active', pid))
         cron_db_conn.commit()
         column_names = [desc[0] for desc in src_cursor.description]     #getting column names of that table
         id_index = column_names.index('id') if 'id' in column_names else None       #getting the index to id column
 
         try:
             while True:
-                cron_db_cursor.execute("SELECT batch_size, sleep_time FROM schedules WHERE process_id = %s", (pid,))
+                cron_db_cursor.execute("SELECT batch_size, sleep_time FROM schedules WHERE process_id = ?", (pid,))
                 cron_schedule_data = cron_db_cursor.fetchone()
                 global batch_size,sleep_time
                 batch_size = cron_schedule_data['batch_size']
@@ -199,18 +207,20 @@ def transfer_table_data(table_name):
                 dest_cursor.execute(f"SELECT COUNT(*) FROM {table_name}")
                 final_dest_count = dest_cursor.fetchone()[0]
                 cron_db_cursor.execute(
-                            """
-                            UPDATE process p
-                            JOIN schedules s ON s.process_id = %s
-                            SET p.scheduler_id = s.id,
-                                p.table_name = %s,
-                                p.converted_rows = %s,
-                                p.dest_total_rows = %s,
-                                p.status = %s
-                            WHERE p.table_name = %s
-                            """, 
-                            (pid, table_name, total_moved, final_dest_count, 'processing', table_name)
-                        )
+                    """
+                    UPDATE process
+                    SET scheduler_id = s.id,
+                        table_name = ?,
+                        converted_rows = ?,
+                        dest_total_rows = ?,
+                        status = ?
+                    FROM schedules s
+                    WHERE process.table_name = ? 
+                    AND s.process_id = ?
+                    """, 
+                    (table_name, total_moved, final_dest_count, 'processing', table_name, pid)
+                )
+
                 dest_conn.commit()
                 cron_db_conn.commit()
                 sleep()
@@ -223,16 +233,19 @@ def transfer_table_data(table_name):
             transfer_log.error(f"Error moving batch near row {total_moved}: {e}")
             cron_db_cursor.execute(
                 """
-                UPDATE process p
-                JOIN schedules s ON s.process_id = %s
-                SET p.scheduler_id = s.id,
-                    p.table_name = %s,
-                    p.status = %s,
-                    p.error_msg = %s
-                WHERE p.table_name = %s AND p.scheduler_id = s.id
+                UPDATE process
+                SET scheduler_id = s.id,
+                    table_name = ?,
+                    status = ?,
+                    error_msg = ?
+                FROM schedules s
+                WHERE process.table_name = ? 
+                AND process.scheduler_id = s.id
+                AND s.process_id = ?
                 """, 
-                (pid, table_name, 'error1', str(e), table_name)
+                (table_name, 'error1', str(e), table_name, pid)
             )
+
             cron_db_conn.commit()
 
         # 4. Post-transfer Verification
@@ -243,45 +256,50 @@ def transfer_table_data(table_name):
             report = f"COMPLETE: Moved {total_moved} rows. Destination now total: {final_dest_count}"
             transfer_log.info(report)
             cron_db_cursor.execute(
-                    """
-                    UPDATE process p
-                    JOIN schedules s ON s.process_id = %s
-                    SET p.scheduler_id = s.id,
-                        p.table_name = %s,
-                        p.converted_rows = %s,
-                        p.dest_total_rows = %s,
-                        p.status = %s,
-                        p.error_msg = %s
-                    WHERE p.table_name = %s AND p.scheduler_id = s.id
-                    """, 
-                    (pid, table_name, total_moved, final_dest_count, 'completed', '', table_name)
-                )
+                """
+                UPDATE process
+                SET scheduler_id = s.id,
+                    table_name = ?,
+                    converted_rows = ?,
+                    dest_total_rows = ?,
+                    status = ?,
+                    error_msg = ?
+                FROM schedules s
+                WHERE process.table_name = ? 
+                AND process.scheduler_id = s.id
+                AND s.process_id = ?
+                """, 
+                (table_name, total_moved, final_dest_count, 'completed', '', table_name, pid)
+            )
+
             cron_db_conn.commit()
 
         else:
             transfer_log.error(f"ERROR: Moved {total_moved} rows. Deleted {total_deleted} rows. when target rows {total_rows} and destination rows {final_dest_count}")
             cron_db_cursor.execute(
-                    """
-                    UPDATE process p
-                    JOIN schedules s ON s.process_id = %s
-                    SET p.scheduler_id = s.id,
-                        p.table_name = %s,
-                        p.converted_rows = %s,
-                        p.dest_total_rows = %s,
-                        p.status = %s,
-                        p.error_msg = %s
-                    WHERE p.table_name = %s AND p.scheduler_id = s.id AND p.status != 'error1'
-                    """, 
-                    (pid, table_name, total_moved, final_dest_count, 'error2', 'some data not deleted or moved', table_name)
-                )
+                """
+                UPDATE process
+                SET scheduler_id = (SELECT id FROM schedules WHERE process_id = ?),
+                    table_name = ?,
+                    converted_rows = ?,
+                    dest_total_rows = ?,
+                    status = ?,
+                    error_msg = ?
+                WHERE table_name = ? 
+                AND status != 'error1'
+                AND scheduler_id = (SELECT id FROM schedules WHERE process_id = ?)
+                """, 
+                (pid, table_name, total_moved, final_dest_count, 'error2', 'some data not deleted or moved', table_name, pid)
+            )
+
             cron_db_conn.commit()
 
     except mysql.connector.Error as err:
         query_upsert = """
         INSERT INTO process (scheduler_id, table_name, status, error_msg)
-        SELECT s.id, %s, %s, %s
+        SELECT s.id, ?, ?, ?
         FROM schedules s
-        WHERE s.process_id = %s
+        WHERE s.process_id = ?
         LIMIT 1
         ON DUPLICATE KEY UPDATE
             status = VALUES(status),
@@ -318,13 +336,15 @@ def get_all_tables():
         
         
 def transfer_data(target_tables):
+    delete_order_table = True
     pid = os.getpid()
     global delete_source_rows
     tables_name = []
     try:
         cron_db_conn = connect_db(cron_db_config)
-        cron_cursor = cron_db_conn.cursor(dictionary=True)
-        cron_cursor.execute("SELECT p.table_name FROM process as p JOIN schedules as s ON p.scheduler_id=s.id WHERE s.process_id=%s AND p.status = 'completed'",(pid,))
+        cron_db_conn.row_factory = sqlite3.Row
+        cron_cursor = cron_db_conn.cursor()
+        cron_cursor.execute("SELECT p.table_name FROM process as p JOIN schedules as s ON p.scheduler_id=s.id WHERE s.process_id=? AND p.status = 'completed'",(pid,))
         completed_table_rows = cron_cursor.fetchall()
         completed_tables = [row['table_name'] for row in completed_table_rows]
 
@@ -350,12 +370,19 @@ def transfer_data(target_tables):
         for t_name in tables_name:
             if t_name not in completed_tables:
                 transfer_table_data(t_name) 
+        cron_cursor.execute("SELECT p.table_name FROM process as p JOIN schedules as s ON p.scheduler_id=s.id WHERE s.process_id=? AND p.status = 'error1' or p.status = 'error2' or p.status = 'error3'",(pid,))
+        error_table_rows = cron_cursor.fetchall()
+        error_tables = [row['table_name'] for row in error_table_rows]
+        for t_name in error_tables:
+            if t_name in order_dependent_archive_table:
+                delete_order_table = False
+                break
         
-        if 'orders' in tables_name and delete_source_rows:
+        if 'orders' in tables_name and delete_source_rows and delete_order_table:
             transfer_table_data('orders')
         
         transfer_log.info("data transfer completed")
-        cron_cursor.execute("UPDATE schedules SET status = 'completed' WHERE process_id = %s", (pid,))
+        cron_cursor.execute("UPDATE schedules SET status = 'completed' WHERE process_id = ?", (pid,))
         cron_db_conn.commit()
         
     except mysql.connector.Error as err:
@@ -436,13 +463,14 @@ def main():
     try:
         cron_db = connect_db(cron_db_config)   
         if cron_db:
-            cron_cursor = cron_db.cursor(dictionary=True)
+            cron_db.row_factory = sqlite3.Row
+            cron_cursor = cron_db.cursor()
             cron_cursor.execute(
                     "SELECT id, process_id, src_host, src_port, src_db_name, src_user_name, "
                     "src_pass, src_ca_cert, dest_host, dest_port, dest_db_name, dest_user_name, "
                     "dest_pass, dest_ca_cert, start_time, batch_size, sleep_time, status, "
                     "created_at, updated_at, start_date, end_date, delete_source_rows, test_connection "
-                    "FROM schedules WHERE status <> 'completed' OR status IS NULL LIMIT 1"
+                    "FROM schedules WHERE (status <> 'completed' OR status IS NULL) AND start_time <= datetime('now', 'localtime') ORDER BY start_time ASC LIMIT 1"
                 )
 
             scheduled_job = cron_cursor.fetchone()
@@ -451,13 +479,11 @@ def main():
                 if not scheduled_job['process_id']:
                     pid = os.getpid()
                     print("pid",pid)
-                    cron_cursor.execute(
-                        "UPDATE schedules SET process_id = %s, status = 'running' WHERE id = %s",
-                        (pid, scheduled_job['id'])
-                    )
+                    cron_cursor.execute("UPDATE schedules SET process_id = ?, status = 'running' WHERE id = ?",(pid, scheduled_job['id']))
+
                     cron_db.commit()
                     start_process(scheduled_job) 
-                    cron_cursor.execute("UPDATE schedules SET status = 'completed' WHERE process_id = %s", (pid,))
+                    cron_cursor.execute("UPDATE schedules SET status = 'completed' WHERE process_id = ?", (pid,))
                     cron_db.commit() 
                 else :
                     try:
@@ -475,13 +501,10 @@ def main():
                         transfer_log.addHandler(transfer_log_handler)
 
                         pid = os.getpid()
-                        cron_cursor.execute(
-                            "UPDATE schedules SET process_id = %s, status = 'running' WHERE id = %s",
-                            (pid, scheduled_job['id'])
-                        )
+                        cron_cursor.execute("UPDATE schedules SET process_id = ?, status = 'running' WHERE id = ?",(pid, scheduled_job['id']))
                         cron_db.commit()
                         start_process(scheduled_job) 
-                        cron_cursor.execute("UPDATE schedules SET status = 'completed' WHERE process_id = %s", (pid,))
+                        cron_cursor.execute("UPDATE schedules SET status = 'completed' WHERE process_id = ?", (pid,))
                         cron_db.commit() 
             else:
                 print("No scheduled job found")
